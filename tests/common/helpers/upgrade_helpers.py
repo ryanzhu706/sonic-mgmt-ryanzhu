@@ -359,16 +359,20 @@ def perform_gnoi_upgrade(
     res = duthost.shell(f"test -s {cfg.dut_image_path}", module_ignore_errors=True)
     pytest_assert(res.get("rc", 1) == 0, f"Downloaded file not found or empty on DUT: {cfg.dut_image_path}")
 
+    # Auto-detect target version from downloaded image
+    version_result = duthost.shell("sudo sonic_installer binary_version {}".format(cfg.dut_image_path))
+    to_version = version_result["stdout"].strip()
+    logger.info("Detected target version from binary: %s", to_version)
+
     # ---- 3) SetPackage (via wrapper) ----
     setpkg_resp = ptf_gnoi.system_set_package(
         local_path=cfg.dut_image_path,
-        version=cfg.to_version,
+        version=to_version,
         activate=True,
     )
     logger.info("SetPackage response: %s", setpkg_resp)
     pytest_assert(isinstance(setpkg_resp, dict), "SetPackage did not return a JSON object")
 
-    pytest_assert(cfg.to_version, "cfg.to_version must be provided for validation")
     # ---- 4) Reboot (via wrapper) ----
     try:
         reboot_resp = ptf_gnoi.system_reboot(method=str(cfg.upgrade_type).upper())
@@ -399,8 +403,8 @@ def perform_gnoi_upgrade(
     images = _get_images_from_sonic_installer_list(duthost)
     logger.info("sonic-installer list parsed: %s", images)
     pytest_assert(
-        images.get("current") == cfg.to_version,
-        f"Current image mismatch after reboot. current={images.get('current')} expected={cfg.to_version}. full={images}"
+        images.get("current") == to_version,
+        f"Current image mismatch after reboot. current={images.get('current')} expected={to_version}. full={images}"
     )
 
     return {"transfer_resp": transfer_resp, "setpkg_resp": setpkg_resp, "reboot_resp": reboot_resp}

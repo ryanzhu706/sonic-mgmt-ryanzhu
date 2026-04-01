@@ -362,6 +362,7 @@ def perform_gnoi_upgrade(
     # Auto-detect target version from downloaded image
     version_result = duthost.shell("sudo sonic_installer binary_version {}".format(cfg.dut_image_path))
     to_version = version_result["stdout"].strip()
+    pytest_assert(to_version, "Failed to detect version from binary: {}".format(cfg.dut_image_path))
     logger.info("Detected target version from binary: %s", to_version)
 
     # ---- 3) SetPackage (via wrapper) ----
@@ -433,6 +434,7 @@ def _upgrade_one_dpu_via_gnoi(duthost, tbinfo, ptf_gnoi, cfg: GnoiUpgradeConfig)
     # Auto-detect target version from downloaded image
     version_result = duthost.shell("sudo sonic_installer binary_version {}".format(cfg.dut_image_path))
     to_version = version_result["stdout"].strip()
+    pytest_assert(to_version, "Failed to detect version from binary: {}".format(cfg.dut_image_path))
     logger.info("Detected target version from binary: %s", to_version)
 
     setpkg_resp = ptf_gnoi.system_set_package(

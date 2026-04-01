@@ -430,9 +430,14 @@ def _upgrade_one_dpu_via_gnoi(duthost, tbinfo, ptf_gnoi, cfg: GnoiUpgradeConfig)
         metadata=md,
     )
 
+    # Auto-detect target version from downloaded image
+    version_result = duthost.shell("sudo sonic_installer binary_version {}".format(cfg.dut_image_path))
+    to_version = version_result["stdout"].strip()
+    logger.info("Detected target version from binary: %s", to_version)
+
     setpkg_resp = ptf_gnoi.system_set_package(
         local_path=cfg.dut_image_path,
-        version=cfg.to_version,
+        version=to_version,
         activate=True,
         metadata=md,
     )

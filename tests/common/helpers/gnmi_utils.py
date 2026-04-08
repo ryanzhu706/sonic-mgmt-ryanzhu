@@ -1,4 +1,10 @@
 import logging
+import ipaddress
+from datetime import datetime, timedelta, timezone
+from cryptography import x509
+from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 logger = logging.getLogger(__name__)
 
@@ -6,6 +12,45 @@ logger = logging.getLogger(__name__)
 GNMI_CERT_NAME = "test.client.gnmi.sonic"
 REVOKED_GNMICERT_NAME = "test.client.revoked.gnmi.sonic"
 TELEMETRY_CONTAINER = "telemetry"
+
+# Backdate certificates by 1 day to handle clock skew between hosts
+_CERT_BACKDATE_DAYS = 1
+
+
+def _get_backdated_validity(days):
+    """Return (not_before, not_after) with backdating for clock skew tolerance."""
+    now = datetime.now(timezone.utc)
+    return now - timedelta(days=_CERT_BACKDATE_DAYS), now + timedelta(days=int(days))
+
+
+def _write_pem_key(filename):
+    """Generate RSA key, write to PEM file, return key object."""
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    with open(filename, "wb") as f:
+        f.write(key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        ))
+    return key
+
+
+def _load_pem_key(filename):
+    """Load RSA private key from PEM file."""
+    with open(filename, "rb") as f:
+        return serialization.load_pem_private_key(f.read(), password=None)
+
+
+def _load_pem_cert(filename):
+    """Load X.509 certificate from PEM file."""
+    with open(filename, "rb") as f:
+        return x509.load_pem_x509_certificate(f.read())
+
+
+def _write_pem_cert(cert, filename):
+    """Write X.509 certificate to PEM file."""
+    with open(filename, "wb") as f:
+        f.write(cert.public_bytes(serialization.Encoding.PEM))
 
 
 class GNMIEnvironment(object):
@@ -256,8 +301,24 @@ def create_gnmi_certs(duthost, localhost, ptfhost):
 
 
 def prepare_root_cert(localhost, days="1825"):
-    create_root_key(localhost)
-    create_root_cert(localhost, days)
+    """Generate CA certificate with backdating for clock skew tolerance."""
+    key = _write_pem_key("gnmiCA.key")
+    not_before, not_after = _get_backdated_validity(days)
+    subject = issuer = x509.Name([
+        x509.NameAttribute(NameOID.COMMON_NAME, "test.gnmi.sonic"),
+    ])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(not_before)
+        .not_valid_after(not_after)
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(key, hashes.SHA256())
+    )
+    _write_pem_cert(cert, "gnmiCA.pem")
 
 
 def create_root_key(localhost):
@@ -279,9 +340,32 @@ def create_root_cert(localhost, days):
 
 
 def prepare_server_cert(duthost, localhost, days="825"):
-    create_server_key(localhost)
-    create_server_csr(localhost)
-    sign_server_certificate(duthost, localhost, days)
+    """Generate server certificate with backdating for clock skew tolerance."""
+    key = _write_pem_key("gnmiserver.key")
+    not_before, not_after = _get_backdated_validity(days)
+    ca_key = _load_pem_key("gnmiCA.key")
+    ca_cert = _load_pem_cert("gnmiCA.pem")
+    # Still create extfile.cnf for backward compatibility (cleanup expects it)
+    create_ext_conf(duthost.mgmt_ip, "extfile.cnf")
+    subject = x509.Name([
+        x509.NameAttribute(NameOID.COMMON_NAME, "test.server.gnmi.sonic"),
+    ])
+    san = x509.SubjectAlternativeName([
+        x509.DNSName("hostname.com"),
+        x509.IPAddress(ipaddress.ip_address(duthost.mgmt_ip)),
+    ])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(ca_cert.subject)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(not_before)
+        .not_valid_after(not_after)
+        .add_extension(san, critical=False)
+        .sign(ca_key, hashes.SHA256())
+    )
+    _write_pem_cert(cert, "gnmiserver.crt")
 
 
 def create_server_key(localhost):
@@ -315,9 +399,25 @@ def sign_server_certificate(duthost, localhost, days):
 
 
 def prepare_client_cert(localhost, days="825"):
-    create_client_key(localhost)
-    create_client_csr(localhost)
-    sign_client_certificate(localhost, days)
+    """Generate client certificate with backdating for clock skew tolerance."""
+    key = _write_pem_key("gnmiclient.key")
+    not_before, not_after = _get_backdated_validity(days)
+    ca_key = _load_pem_key("gnmiCA.key")
+    ca_cert = _load_pem_cert("gnmiCA.pem")
+    subject = x509.Name([
+        x509.NameAttribute(NameOID.COMMON_NAME, GNMI_CERT_NAME),
+    ])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(ca_cert.subject)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(not_before)
+        .not_valid_after(not_after)
+        .sign(ca_key, hashes.SHA256())
+    )
+    _write_pem_cert(cert, "gnmiclient.crt")
 
 
 def create_client_key(localhost, revoke=False):

@@ -483,3 +483,6 @@ r, ".* ERR swss\d*#orchagent:.*getPortLinkTrainingFailure: Failed to get LT fail
 r, ".* ERR auditd.*: queue to plugins is full - dropping event"
 r, ".* ERR auditd.*: message repeated .*: \[ queue to plugins is full - dropping event\]"
 r, ".* ERR auditd.*: auditd queue full reporting limit reached - ending dropped event notifications"
+
+# CHASSIS_STATE_DB only exists on chassis platforms; telemetry/gnmi processes log an ERR on non-chassis systems
+r, ".*ERR (telemetry|gnmi)\d*#(telemetry|gnmi).*getDbInfo: Failed to find CHASSIS_STATE_DB.*"
